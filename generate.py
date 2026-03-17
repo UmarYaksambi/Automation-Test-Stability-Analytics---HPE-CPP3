@@ -64,6 +64,7 @@ import os
 import random
 from datetime import datetime, timedelta
 
+
 # CONFIG
 DEFAULT_CONFIG = {
     "team_name":         "TeamAlpha",
@@ -101,6 +102,29 @@ TESTS = [
     ("s1-t19", "TC_User_BatchExport",         "feature_usermgmt",   "priority_medium", "consistently_failing",0.75, "normal",            "data",      "element",   0.65),
     ("s1-t20", "TC_Login_OAuthCallback",      "feature_login",      "priority_high",   "consistently_failing",0.70, "normal",            "timeout",   "element",   0.70),
 ]
+
+DEPENDENCIES = {
+    "TC_Dashboard_FilterByDate": {
+        "deps": ["TC_Login_ValidCredentials"],
+        "weight": 0.4
+    },
+    "TC_Dashboard_Pagination": {
+        "deps": ["TC_Login_ValidCredentials"],
+        "weight": 0.4
+    },
+    "TC_Dashboard_ExportChart": {
+        "deps": ["TC_Dashboard_FilterByDate"],
+        "weight": 0.5
+    },
+    "TC_Dashboard_LoadWidget": {
+        "deps": ["TC_Login_ValidCredentials"],
+        "weight": 0.6
+    },
+    "TC_User_BulkImport": {
+        "deps": ["TC_User_CreateAccount"],
+        "weight": 0.5
+    }
+}
 
 # FAILURE MESSAGE GENERATORS
 def gen_timeout_msg(rng):
@@ -141,9 +165,9 @@ FAIL_KW = {
 
 # How much extra failure probability each flaky category gets during an anomaly run
 FLAKY_ANOMALY_BOOST = {
-    "flaky-mild":     0.15,
-    "flaky-moderate": 0.30,
-    "flaky-heavy":    0.50,
+    "flaky-mild":     0.30,
+    "flaky-moderate": 0.55,
+    "flaky-heavy":    0.65,
 }
 
 def run_pass_rate(n, anomaly_runs, anomaly_pass_rate):
@@ -170,6 +194,37 @@ def decide_outcome(category, fail_prob, rng):
     return True
 
 # XML BUILDERS
+import math
+
+def get_duration(test, run, rng):
+    _, name, _, _, _, _, pattern, _, _, _ = test
+
+    base = rng.uniform(1.5, 3.0)
+
+    if pattern == "normal":
+        return base + rng.uniform(-0.3, 0.3)
+
+    if pattern == "progressive":
+        value = base + 0.05 * run
+        
+        if run == 50:
+            value *= 0.6  # simulate scaling
+        
+        return value + rng.uniform(-0.3, 0.3)
+
+    elif pattern == "step_change":
+        # sudden jump after some run
+        if run < 40:
+            return base + rng.uniform(-0.3, 0.3)
+        else:
+            return base * 2 + rng.uniform(-0.5, 0.5)
+
+    elif pattern == "seasonal":
+        # sine wave oscillation
+        return base + 1.5 * math.sin(run / 5) + rng.uniform(-0.2, 0.2)
+
+    else:
+        return base
 def build_test_xml(test, n, current_dt, rng, force_fail=False):
 
     tid, name, feature_tag, priority_tag, category, fail_prob, _, primary, secondary, prim_prob = test
@@ -179,9 +234,10 @@ def build_test_xml(test, n, current_dt, rng, force_fail=False):
     else:
         status = "PASS" if decide_outcome(category, fail_prob, rng) else "FAIL"
 
-    dur = rng.uniform(1.2, 8.5)
+    dur = get_duration(test, n, rng)
+
     if status == "FAIL":
-        dur += rng.uniform(5.0, 15.0)
+        dur += rng.uniform(5.0, 10.0)  # failures still take longer
 
     start_dt = current_dt
     end_dt   = start_dt + timedelta(seconds=dur)
@@ -250,6 +306,7 @@ def build_run(n, config, rng):
     forced_failure_count = max(0, target_failures - expected_natural_failures)
 
     weights = []
+    test_results = {}
     for test in TESTS:
         category = test[4]
         fail_prob = test[5]
@@ -291,11 +348,51 @@ def build_run(n, config, rng):
     failed = 0
     tests_xml = ""
 
+    test_results = {}
+
     for i, test in enumerate(TESTS):
-        force_fail = i in fail_indices
-        t_xml, status, cursor = build_test_xml(test, n, cursor, rng, force_fail)
-        tests_xml += t_xml
+        name = test[1]
+        category = test[4]
+        base_fail_prob = test[5]
+
+        # Start with base probability
+        fail_prob = base_fail_prob
+
+        # 🔥 Apply dependency weights
+        dep_info = DEPENDENCIES.get(name)
+        if dep_info:
+            deps = dep_info["deps"]
+            weight = dep_info["weight"]
+
+            failed_count = sum(
+                test_results.get(d) == "FAIL" for d in deps
+            )
+
+            # multiplicative risk model (more realistic)
+            if failed_count > 0:
+                fail_prob = 1 - (1 - fail_prob) * (1 - weight * failed_count)
+
+        # 🔥 Clamp probability
+        fail_prob = min(fail_prob, 0.95)
+
+        # Decide outcome probabilistically
+        if category == "stable":
+            status = "PASS"
+        else:
+            status = "PASS" if rng.random() > fail_prob else "FAIL"
+
+        # 🔥 STILL allow forced failures (for pass-rate control)
+        if i in fail_indices:
+            status = "FAIL"
+
+        t_xml, _, cursor = build_test_xml(
+            test, n, cursor, rng, force_fail=(status == "FAIL")
+        )
+
+        test_results[name] = status
+
         cursor += timedelta(milliseconds=rng.randint(100, 300))
+
         if status == "PASS":
             passed += 1
         else:

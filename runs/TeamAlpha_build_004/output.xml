@@ -1,0 +1,18 @@
+<robot generator="Robot 6.1.1 (Python 3.10.12)" generated="20241004 00:00:00.000" rpa="FALSE" schemaversion="4">
+  <suite id="s1" name="Suite_Regression_TeamAlpha" source="/opt/ci/tests/alpha/Suite_Regression_TeamAlpha.robot">
+    <kw name="Suite Setup" type="setup">
+      <msg timestamp="20241004 00:00:00.000" level="INFO">Suite Suite_Regression_TeamAlpha initialized — team TeamAlpha</msg>
+      <status status="PASS" starttime="20241004 00:00:00.000" endtime="20241004 00:00:00.110"/>
+    </kw>
+    <status status="FAIL" starttime="20241004 00:00:00.000" endtime="20241004 00:02:12.818" passed="11" failed="9"/>
+  </suite>
+  <statistics>
+    <total>
+      <stat pass="11" fail="9">All Tests</stat>
+    </total>
+    <tag>
+      <stat pass="11" fail="9">alpha_regression</stat>
+    </tag>
+  </statistics>
+  <errors/>
+</robot>
