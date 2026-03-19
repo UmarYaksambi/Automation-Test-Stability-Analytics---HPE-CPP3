@@ -1,9 +1,3 @@
-"""
-Usage:
-    python generate.py
-    python generate.py --output-dir ./runs --num-runs 100
-"""
-
 import argparse
 import json
 import os
