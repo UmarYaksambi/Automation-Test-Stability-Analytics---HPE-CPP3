@@ -449,10 +449,6 @@ def validate(runs_dir):
     if all_passed:
         print("✓ ALL VALIDATION CHECKS PASSED")
         print("="*70)
-        print("\nYour synthetic data is ready for Phase 2!")
-        print("\nNext steps:")
-        print("  1. Commit to Git: git add . && git commit -m 'Complete Phase 1'")
-        print("  2. Start Phase 2: Data ingestion pipeline")
     else:
         print("✗ SOME VALIDATION CHECKS FAILED")
         print("="*70)

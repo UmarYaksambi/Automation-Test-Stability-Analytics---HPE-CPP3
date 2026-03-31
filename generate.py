@@ -234,7 +234,7 @@ def base_duration(test_name, n, rng):
     if test_name == "TC_User_BulkImport":
         if n <= 40:
             # Phase 1 (runs 1-40): Normal baseline (10-14s)
-            return rng.uniform(10.0, 14.0)
+            return rng.uniform(10.0, 12.0)
         elif n <= 50:
             # Phase 2a (runs 41-50): Starting to slow (14-18s)
             return rng.uniform(14.0, 18.0)
@@ -243,7 +243,7 @@ def base_duration(test_name, n, rng):
             return rng.uniform(18.0, 24.0)
         else:
             # Phase 3 (runs 66-100): Significantly degraded (28-36s)
-            return rng.uniform(28.0, 36.0)
+            return rng.uniform(28.0, 45.0)
     
     # All other tests: Normal random variation
     return rng.uniform(1.2, 8.5)
