@@ -145,131 +145,141 @@ FAIL_KW = {
 
 # PASS RATE CURVE
 
-def run_pass_rate(n, anomaly_runs, anomaly_pass_rate):
+def run_pass_rate(n, num_runs, anomaly_runs, anomaly_pass_rate):
     """
     Return the suite-level pass-rate target for run n (1-indexed).
-    
-    Design from project specification:
-      - Runs 1-25:   70-80% (early instability phase)
-      - Runs 26-35:  65-72% (gradual decline)
-      - Runs 36-37:  ~27% (ANOMALY SPIKE - V-shape dip)
-      - Runs 38-45:  60-65% (partial recovery)
-      - Runs 46-75:  65-80% (recovery sprint - gradual improvement)
-      - Runs 76-100: 82-95% (stable high quality)
-    
+
+    Phase boundaries scale proportionally with num_runs so the curve shape
+    is preserved for any N >= 100.  Anomaly runs (36-37) remain fixed build
+    numbers — they are a design artifact, not a sliding window.
+
+    For num_runs=100 the boundaries are identical to the original design:
+      - Phase 1 (1-25):   70-80%  (early instability)
+      - Phase 2 (26-35):  65-72%  (gradual decline)
+      - Runs 36-37:       ~27%    (ANOMALY — fixed build numbers)
+      - Phase 3 (36-45):  60-65%  (partial recovery)
+      - Phase 4 (46-75):  65-80%  (recovery sprint)
+      - Phase 5 (76-N):   82-95%  (stable high quality)
+
     Args:
-        n: Run number (1-100)
-        anomaly_runs: List of anomaly run numbers (e.g., [36, 37])
+        n:                 Run number (1-indexed)
+        num_runs:          Total number of runs being generated
+        anomaly_runs:      List of anomaly run numbers (e.g., [36, 37])
         anomaly_pass_rate: Pass rate during anomaly (e.g., 0.27)
-    
+
     Returns:
         float: Target pass rate for this run (0.0 to 1.0)
     """
-    # Anomaly runs override everything
+    # Anomaly runs override everything (fixed design artifact)
     if n in anomaly_runs:
         return anomaly_pass_rate
-    
-    # Phase 1: Early instability (runs 1-25)
-    if 1 <= n <= 25:
+
+    # Compute proportional phase boundaries
+    p25 = int(num_runs * 0.25)   # Phase 1 end  — 25 for N=100, 50 for N=200
+    p35 = int(num_runs * 0.35)   # Phase 2 end  — 35 for N=100, 70 for N=200
+    p45 = int(num_runs * 0.45)   # Phase 3 end  — 45 for N=100, 90 for N=200
+    p75 = int(num_runs * 0.75)   # Phase 4 end  — 75 for N=100, 150 for N=200
+
+    # Phase 1: Early instability
+    if n <= p25:
         return random.uniform(0.70, 0.80)
-    
-    # Phase 2: Gradual decline (runs 26-35)
-    elif 26 <= n <= 35:
+
+    # Phase 2: Gradual decline
+    elif n <= p35:
         return random.uniform(0.65, 0.72)
-    
-    # Phase 3: Partial recovery (runs 38-45)
-    # Note: Runs 36-37 are anomaly, so this starts at 38
-    elif 38 <= n <= 45:
+
+    # Phase 3: Partial recovery (anomaly runs are already handled above)
+    elif n <= p45:
         return random.uniform(0.60, 0.65)
-    
-    # Phase 4: Recovery sprint (runs 46-75)
-    elif 46 <= n <= 75:
+
+    # Phase 4: Recovery sprint
+    elif n <= p75:
         return random.uniform(0.65, 0.80)
- 
-    # Phase 5: Stable high quality (runs 76-100)
-    else:  # 76 <= n <= 100
+
+    # Phase 5: Stable high quality
+    else:
         return random.uniform(0.82, 0.95)
 
 
 # DURATION PATTERNS
 
-def base_duration(test_name, n, rng):
+def base_duration(test_name, n, num_runs, rng):
     """
     Calculate base test duration based on test name and run number.
-    
-    Implements three special duration patterns:
-      1. TC_Login_ValidCredentials: Seasonal (even/odd alternating)
-      2. TC_Dashboard_ExportChart: Step change at run 51
-      3. TC_User_BulkImport: Progressive drift (4 phases)
-    
-    All other tests use normal random variation.
-    
+
+    All pattern boundaries scale proportionally with num_runs so the shape
+    is preserved for any N >= 100.  For num_runs=100 the boundaries are
+    identical to the original design.
+
+      1. TC_Login_ValidCredentials:  Seasonal (even/odd — all runs, no boundary)
+      2. TC_Dashboard_ExportChart:   Step change at run N//2  (50 for N=100)
+      3. TC_User_BulkImport:         Progressive drift over 4 phases
+
     Args:
         test_name: Name of the test
-        n: Run number (1-100)
-        rng: Random number generator
-    
+        n:         Run number (1-indexed)
+        num_runs:  Total number of runs being generated
+        rng:       Random number generator
+
     Returns:
         float: Base duration in seconds (before failure overhead)
     """
-    # Pattern 1: Seasonal (alternating even/odd)
+    # Pattern 1: Seasonal (alternating even/odd — no boundary needed)
     if test_name == "TC_Login_ValidCredentials":
         if n % 2 == 0:
-            # Even runs: Fast server (2.0-3.5s)
-            return rng.uniform(2.0, 3.5)
+            return rng.uniform(2.0, 3.5)   # Even: fast server
         else:
-            # Odd runs: Slow server (4.5-6.5s)
-            return rng.uniform(4.5, 6.5)
-    
-    # Pattern 2: Step change at run 51
+            return rng.uniform(4.5, 6.5)   # Odd:  slow server
+
+    # Pattern 2: Step change at mid-point (scales with N)
     if test_name == "TC_Dashboard_ExportChart":
-        if n <= 50:
-            # Runs 1-50: Normal performance (3-5s)
-            return rng.uniform(3.0, 5.0)
+        step_boundary = num_runs // 2       # 50 for N=100, 100 for N=200
+        if n <= step_boundary:
+            return rng.uniform(3.0, 5.0)   # Before: normal performance
         else:
-            # Runs 51-100: After deployment, 3× slower (12-15s)
-            return rng.uniform(12.0, 15.0)
-    
-    # Pattern 3: Progressive drift (4 phases)
+            return rng.uniform(12.0, 15.0) # After:  ~3× slower post-deployment
+
+    # Pattern 3: Progressive drift (4 phases, all boundaries scale with N)
     if test_name == "TC_User_BulkImport":
-        if n <= 40:
-            # Phase 1 (runs 1-40): Normal baseline (10-14s)
-            return rng.uniform(10.0, 12.0)
-        elif n <= 50:
-            # Phase 2a (runs 41-50): Starting to slow (14-18s)
-            return rng.uniform(14.0, 18.0)
-        elif n <= 65:
-            # Phase 2b (runs 51-65): Noticeably slower (18-24s)
-            return rng.uniform(18.0, 24.0)
+        p40 = int(num_runs * 0.40)   # 40 for N=100, 80  for N=200
+        p50 = int(num_runs * 0.50)   # 50 for N=100, 100 for N=200
+        p65 = int(num_runs * 0.65)   # 65 for N=100, 130 for N=200
+
+        if n <= p40:
+            return rng.uniform(10.0, 12.0)  # Phase 1: normal baseline
+        elif n <= p50:
+            return rng.uniform(14.0, 18.0)  # Phase 2a: starting to slow
+        elif n <= p65:
+            return rng.uniform(18.0, 24.0)  # Phase 2b: noticeably slower
         else:
-            # Phase 3 (runs 66-100): Significantly degraded (28-36s)
-            return rng.uniform(28.0, 45.0)
-    
-    # All other tests: Normal random variation
+            return rng.uniform(28.0, 45.0)  # Phase 3: significantly degraded
+
+    # All other tests: normal random variation
     return rng.uniform(1.2, 8.5)
 
 
-def test_duration(test_name, n, status, rng):
+def test_duration(test_name, n, num_runs, status, rng):
     """
     Calculate total test duration including failure overhead.
-    
+
     Failed tests add 5-15 seconds for timeout/retry overhead.
-    
+
     Args:
         test_name: Name of the test
-        n: Run number (1-100)
-        status: Test status ("PASS" or "FAIL")
-        rng: Random number generator
-    
+        n:         Run number (1-indexed)
+        num_runs:  Total number of runs being generated
+        status:    Test status ("PASS" or "FAIL")
+        rng:       Random number generator
+
     Returns:
         float: Total duration in seconds (rounded to 3 decimal places)
     """
-    d = base_duration(test_name, n, rng)
-    
+    d = base_duration(test_name, n, num_runs, rng)
+
     # Failed tests have additional overhead for timeouts, retries, error handling
     if status == "FAIL":
         d += rng.uniform(5.0, 15.0)
-    
+
     return round(d, 3)
 
 
@@ -376,30 +386,31 @@ def _indent(elem, level=0):
             elem.tail = pad
 
 
-def build_test_xml(test, passed, n, is_anomaly, current_dt, rng, force_fail=False, force_pass=False):
+def build_test_xml(test, passed, n, num_runs, is_anomaly, current_dt, rng, force_fail=False, force_pass=False):
     """
     Build XML element for a single test case.
-    
+
     Creates Robot Framework <test> element with:
       - Test metadata (id, name, tags)
       - Keyword element with execution details
       - Status element with timing and result
       - Failure messages (if test failed)
-    
+
     Args:
-        test: Test tuple from TESTS configuration
-        passed: Whether test naturally passed (before forcing)
-        n: Run number (1-100)
-        is_anomaly: Whether this is an anomaly run
-        current_dt: Current datetime (start of this test)
-        rng: Random number generator
-        force_fail: Override to force failure (for pass rate correction)
-        force_pass: Override to force pass (for pass rate correction)
-    
+        test:        Test tuple from TESTS configuration
+        passed:      Whether test naturally passed (before forcing)
+        n:           Run number (1-indexed)
+        num_runs:    Total number of runs being generated
+        is_anomaly:  Whether this is an anomaly run
+        current_dt:  Current datetime (start of this test)
+        rng:         Random number generator
+        force_fail:  Override to force failure (for pass rate correction)
+        force_pass:  Override to force pass (for pass rate correction)
+
     Returns:
         tuple: (test_element, status, next_datetime)
-            - test_element: ET.Element for the test
-            - status: "PASS" or "FAIL"
+            - test_element:  ET.Element for the test
+            - status:        "PASS" or "FAIL"
             - next_datetime: Datetime after this test completes
     """
     # Unpack test configuration
@@ -414,7 +425,7 @@ def build_test_xml(test, passed, n, is_anomaly, current_dt, rng, force_fail=Fals
         status = "PASS" if passed else "FAIL"
     
     # Calculate timing
-    dur = test_duration(name, n, status, rng)
+    dur = test_duration(name, n, num_runs, status, rng)
     start_dt = current_dt
     end_dt = start_dt + timedelta(seconds=dur)
     
@@ -577,7 +588,7 @@ def build_run(n, config, rng):
     passed = 0
     failed = 0
     
-    target_pass_rate = run_pass_rate(n, config["anomaly_runs"], config["anomaly_pass_rate"])
+    target_pass_rate = run_pass_rate(n, config["num_runs"], config["anomaly_runs"], config["anomaly_pass_rate"])
     total_tests = len(TESTS)
     target_failures = round(total_tests * (1 - target_pass_rate))
     
@@ -656,7 +667,7 @@ def build_run(n, config, rng):
         force_pass = i in force_pass_indices
         
         test_el, status, cursor = build_test_xml(
-            test, outcome, n, is_anomaly, cursor, rng,
+            test, outcome, n, config["num_runs"], is_anomaly, cursor, rng,
             force_fail=force_fail, force_pass=force_pass
         )
         

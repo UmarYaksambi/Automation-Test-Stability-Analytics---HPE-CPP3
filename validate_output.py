@@ -45,7 +45,7 @@ def validate_structure(runs_dir):
         if os.path.isdir(os.path.join(runs_dir, f)) and f.startswith("TeamAlpha_build_")
     ])
     
-    if len(folders) != 100:
+    if len(folders) < 100:
         return False, f"Expected 100 run folders, found {len(folders)}", folders
     
     # Check each folder has required files
