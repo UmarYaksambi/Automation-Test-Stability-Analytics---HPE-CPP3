@@ -34,6 +34,9 @@ TESTS = [
     ("s1-t18", "TC_User_RoleAssignment",      "feature_usermgmt",   "priority_high",   "consistently_failing",0.80, "normal",            "assertion", "data",      0.65),
     ("s1-t19", "TC_User_BatchExport",         "feature_usermgmt",   "priority_medium", "consistently_failing",0.75, "normal",            "data",      "element",   0.65),
     ("s1-t20", "TC_Login_OAuthCallback",      "feature_login",      "priority_high",   "consistently_failing",0.70, "normal",            "timeout",   "element",   0.70),
+    ("s1-t21", "TC_API_UserProfile_Get",     "feature_api",        "priority_medium", "flaky-moderate",      0.40, "normal",            "assertion", "data",      0.75),
+    ("s1-t22", "TC_Report_GenerateMonthly",  "feature_reports",    "priority_medium", "flaky-mild",          0.35, "normal",            "environment","timeout",  0.70),
+    ("s1-t23", "TC_Export_AuditLogs",        "feature_audit",      "priority_medium", "flaky-mild",          0.30, "normal",            "data",      "assertion", 0.80),
 ]
 
 # DEPENDENCY MODEL

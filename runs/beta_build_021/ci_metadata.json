@@ -1,13 +1,13 @@
 {
-  "team": "TeamAlpha",
+  "team": "TeamBeta",
   "suite": "beta",
   "program": "beta",
   "build_no": 21,
   "timestamp": "2024-10-21T00:00:00",
-  "total": 20,
+  "total": 23,
   "passed": 16,
-  "failed": 4,
-  "pass_rate_pct": 80.0,
+  "failed": 7,
+  "pass_rate_pct": 69.6,
   "environment": "staging",
-  "executor": "jenkins-agent-09"
+  "executor": "jenkins-agent-06"
 }

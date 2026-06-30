@@ -12,7 +12,7 @@ Usage:
 import random
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -265,6 +265,27 @@ def inject_css() -> None:
     button[kind="primary"]:hover {{
         background: {C["red"]}38 !important;
         border-color: {C["red"]}66 !important;
+    }}
+
+    [data-testid="stTable"] table {{
+        border-collapse: collapse; width: 100%;
+        font: 400 0.8rem/1.55 'IBM Plex Sans', sans-serif;
+    }}
+    [data-testid="stTable"] th {{
+        background: {C["bg2"]}; color: {C["muted"]};
+        font: 600 0.66rem/1 'JetBrains Mono', monospace;
+        text-transform: uppercase; letter-spacing: .1em;
+        padding: .55rem .85rem; border-bottom: 1px solid {C["border"]};
+        white-space: nowrap; text-align: left;
+    }}
+    [data-testid="stTable"] td {{
+        color: {C["txt"]}; padding: .48rem .85rem;
+        border-bottom: 1px solid {C["border"]}44;
+        word-break: break-word; white-space: normal;
+        vertical-align: top;
+    }}
+    [data-testid="stTable"] tr:hover td {{
+        background: {C["card"]};
     }}
     </style>
     """,
@@ -1057,6 +1078,7 @@ def render_sidebar(df_runs: pd.DataFrame, db_paths: list[str], db_sources: list[
         show_run_inspector = st.checkbox("Run Inspector", value=False)
         show_duration_drift = st.checkbox("Duration Drift", value=False)
         show_health_matrix = st.checkbox("Test Health Matrix", value=False)
+        show_jira_linkage = st.checkbox("JIRA Defect Linkage", value=False)
         st.markdown("---")
 
         st.markdown(f'<div class="sb-label">Run Inspector</div>', unsafe_allow_html=True)
@@ -1085,7 +1107,7 @@ def render_sidebar(df_runs: pd.DataFrame, db_paths: list[str], db_sources: list[
             unsafe_allow_html=True,
         )
 
-    return selected_source, selected_week, selected_run_id, drift_test, show_trend, show_run_inspector, show_duration_drift, show_health_matrix
+    return selected_source, selected_week, selected_run_id, drift_test, show_trend, show_run_inspector, show_duration_drift, show_health_matrix, show_jira_linkage
 
 
 def render_header(df_runs: pd.DataFrame) -> None:
@@ -1405,6 +1427,372 @@ def render_test_health_matrix(df_results: pd.DataFrame, selected_source: str) ->
                     unsafe_allow_html=True,
                 )
 
+def render_jira_linkage(db_paths: list[str]) -> None:
+    """JIRA Defect Linkage — KPIs, charts, confirmed/pending/all-defects tabs."""
+    _section("JIRA", "Defect Linkage", "Automated defect → test run mapping")
+
+    db_path = db_paths[0] if db_paths else DEFAULT_DB
+    try:
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+    except Exception as e:
+        st.error(f"Cannot connect to database: {e}")
+        return
+
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+    if "jira_defects" not in tables or "defect_test_links" not in tables:
+        st.info(
+            "No JIRA data found. Run `python jira_ingest.py defects.json` to import defects "
+            "and generate candidate links."
+        )
+        conn.close()
+        return
+
+    # ── Filters ───────────────────────────────────────────────────────────────
+    _ALL_STRATEGIES = ["exact_name", "label_dict", "keyword_area", "keyword", "semantic"]
+    fc1, fc2 = st.columns([1, 2])
+    with fc1:
+        teams = ["All"] + [
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT team FROM runs ORDER BY team"
+            ).fetchall()
+        ]
+        team_filter = st.selectbox("Filter by team", teams, key="jira_team_filter")
+    with fc2:
+        strategy_filter = st.multiselect(
+            "Filter by strategy", _ALL_STRATEGIES,
+            default=_ALL_STRATEGIES, key="jira_strategy_filter",
+        )
+    if not strategy_filter:
+        strategy_filter = _ALL_STRATEGIES
+    # Used as (team_filter, team_filter) in: WHERE (? = 'All' OR r.team = ?)
+    tf = (team_filter, team_filter)
+
+    # ── KPIs ──────────────────────────────────────────────────────────────────
+    total_defects = conn.execute("SELECT COUNT(*) FROM jira_defects").fetchone()[0]
+    total_links = conn.execute(
+        "SELECT COUNT(*) FROM defect_test_links dtl "
+        "JOIN runs r ON dtl.run_id = r.run_id "
+        "WHERE (? = 'All' OR r.team = ?)", tf,
+    ).fetchone()[0]
+    confirmed = conn.execute(
+        "SELECT COUNT(*) FROM defect_test_links dtl "
+        "JOIN runs r ON dtl.run_id = r.run_id "
+        "WHERE dtl.confirmed = 1 AND (? = 'All' OR r.team = ?)", tf,
+    ).fetchone()[0]
+    pending = conn.execute(
+        "SELECT COUNT(*) FROM defect_test_links dtl "
+        "JOIN runs r ON dtl.run_id = r.run_id "
+        "WHERE dtl.confirmed = 0 AND (? = 'All' OR r.team = ?)", tf,
+    ).fetchone()[0]
+    rejected = conn.execute(
+        "SELECT COUNT(*) FROM defect_test_links dtl "
+        "JOIN runs r ON dtl.run_id = r.run_id "
+        "WHERE dtl.confirmed = -1 AND (? = 'All' OR r.team = ?)", tf,
+    ).fetchone()[0]
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    for col, label, value, color, sub in [
+        (k1, "Defects Imported",  total_defects, "blue",                                 "Total in DB"),
+        (k2, "Candidate Links",   total_links,   "blue",                                 "All strategies"),
+        (k3, "Auto-Confirmed",    confirmed,     "green",                                "Score ≥ 70"),
+        (k4, "Pending Review",    pending,       "amber" if pending > 0 else "green",    "Score 40–69"),
+        (k5, "Rejected",          rejected,      "red",                                  "Score &lt; 40 or manual"),
+    ]:
+        with col:
+            st.markdown(
+                f'<div class="metric-card mc-{color}">'
+                f'  <div class="mc-label">{label}</div>'
+                f'  <div class="mc-value {color}">{value}</div>'
+                f'  <div class="mc-sub">{sub}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown('<div style="margin-top:1.8rem;"></div>', unsafe_allow_html=True)
+
+    # ── Charts ────────────────────────────────────────────────────────────────
+    STRATEGY_COLORS = {
+        "exact_name": C["blue"],
+        "label_dict": C["purple"],
+        "keyword":    C["orange"],
+        "semantic":   C["teal"],
+    }
+
+    ch1, ch2 = st.columns(2)
+
+    with ch1:
+        df_cov = pd.read_sql_query(
+            """SELECT dtl.jira_key, COUNT(*) AS link_count,
+                      MAX(dtl.match_strategy) AS match_strategy
+               FROM defect_test_links dtl
+               JOIN runs r ON dtl.run_id = r.run_id
+               WHERE dtl.confirmed = 1 AND (? = 'All' OR r.team = ?)
+               GROUP BY dtl.jira_key
+               ORDER BY link_count DESC""",
+            conn, params=tf,
+        )
+        if not df_cov.empty:
+            bar_colors = [STRATEGY_COLORS.get(s, C["muted"]) for s in df_cov["match_strategy"]]
+            fig_cov = go.Figure(layout=dark_layout(height=340, margin=dict(l=10, r=20, t=36, b=10)))
+            fig_cov.add_trace(go.Bar(
+                x=df_cov["link_count"],
+                y=df_cov["jira_key"],
+                orientation="h",
+                marker=dict(color=bar_colors, line=dict(width=0)),
+                hovertemplate="<b>%{y}</b><br>Linked runs: <b>%{x}</b><extra></extra>",
+            ))
+            fig_cov.update_layout(
+                title=dict(
+                    text="Defect Coverage — linked failing runs per defect",
+                    font=dict(size=11, color=C["muted"]), x=0,
+                ),
+                yaxis=dict(autorange="reversed"),
+                xaxis=dict(
+                    title=dict(text="Linked Run Count", font=dict(size=10, color=C["muted"])),
+                    dtick=1,
+                ),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_cov, use_container_width=True, config={"displayModeBar": False})
+            legend_html = "  ".join(
+                f'<span style="color:{clr}; font:600 0.68rem/1 \'JetBrains Mono\',monospace;">'
+                f'&#9632; {strat.replace("_", " ").upper()}</span>'
+                for strat, clr in STRATEGY_COLORS.items()
+            )
+            st.markdown(f'<div style="margin-top:.2rem;">{legend_html}</div>', unsafe_allow_html=True)
+
+    with ch2:
+        df_tc = pd.read_sql_query(
+            """SELECT dtl.test_name,
+                      COUNT(DISTINCT dtl.jira_key) AS defect_count
+               FROM defect_test_links dtl
+               JOIN runs r ON dtl.run_id = r.run_id
+               WHERE dtl.confirmed = 1 AND (? = 'All' OR r.team = ?)
+               GROUP BY dtl.test_name
+               ORDER BY defect_count DESC
+               LIMIT 15""",
+            conn, params=tf,
+        )
+        if not df_tc.empty:
+            df_tc["short_name"] = df_tc["test_name"].str.replace("TC_", "", regex=False)
+            fig_tc = go.Figure(layout=dark_layout(height=340, margin=dict(l=10, r=20, t=36, b=90)))
+            fig_tc.add_trace(go.Bar(
+                x=df_tc["short_name"],
+                y=df_tc["defect_count"],
+                marker=dict(color=C["purple"], opacity=0.85, line=dict(width=0)),
+                hovertemplate="<b>%{x}</b><br>Linked defects: <b>%{y}</b><extra></extra>",
+            ))
+            fig_tc.update_layout(
+                title=dict(
+                    text="Test Coverage — distinct defects mapped per test",
+                    font=dict(size=11, color=C["muted"]), x=0,
+                ),
+                xaxis=dict(tickangle=-40, tickfont=dict(size=9)),
+                yaxis=dict(
+                    title=dict(text="Distinct Defects", font=dict(size=10, color=C["muted"])),
+                    dtick=1,
+                ),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_tc, use_container_width=True, config={"displayModeBar": False})
+
+    st.markdown('<div style="margin-top:.4rem;"></div>', unsafe_allow_html=True)
+
+    # ── Tabs ──────────────────────────────────────────────────────────────────
+    tab_confirmed, tab_pending, tab_all = st.tabs(["Confirmed Links", "Pending Review", "All Defects"])
+
+    # ── Confirmed Links ───────────────────────────────────────────────────────
+    with tab_confirmed:
+        # Defect-grouped summary
+        df_grouped = pd.read_sql_query(
+            """SELECT dtl.jira_key, jd.summary, jd.project, jd.status, jd.priority,
+                      GROUP_CONCAT(DISTINCT dtl.test_name) AS linked_test_names,
+                      COUNT(DISTINCT dtl.test_name) AS test_count,
+                      COUNT(*) AS run_count,
+                      MAX(dtl.match_strategy) AS match_strategy
+               FROM defect_test_links dtl
+               JOIN jira_defects jd ON dtl.jira_key = jd.jira_key
+               JOIN runs r ON dtl.run_id = r.run_id
+               WHERE dtl.confirmed = 1 AND (? = 'All' OR r.team = ?)
+               GROUP BY dtl.jira_key
+               ORDER BY run_count DESC""",
+            conn, params=tf,
+        )
+        df_grouped = df_grouped[df_grouped["match_strategy"].isin(strategy_filter)]
+
+        # Flat link table with cosine_sim_score (loaded before summary so we can build per-test sim strings)
+        df_conf = pd.read_sql_query(
+            """SELECT dtl.jira_key, dtl.test_name, dtl.run_id,
+                      dtl.date_delta_days, dtl.match_strategy,
+                      dtl.cosine_sim_score,
+                      jd.summary, jd.status AS jira_status,
+                      jd.priority, jd.reporter_email
+               FROM defect_test_links dtl
+               JOIN jira_defects jd ON dtl.jira_key = jd.jira_key
+               JOIN runs r ON dtl.run_id = r.run_id
+               WHERE dtl.confirmed = 1 AND (? = 'All' OR r.team = ?)
+               ORDER BY dtl.cosine_sim_score DESC NULLS LAST, dtl.date_delta_days ASC""",
+            conn, params=tf,
+        )
+        df_conf = df_conf[df_conf["match_strategy"].isin(strategy_filter)]
+
+        if not df_grouped.empty:
+            df_grouped["linked_test_names"] = df_grouped["linked_test_names"].fillna("").str.replace(",", ", ", regex=False)
+
+            # Build "TestA: 56%, TestB: 41%" per-defect strings from the flat link data
+            if not df_conf.empty:
+                def _sim_pairs(gdf):
+                    parts = []
+                    for _, row in gdf.sort_values("cosine_sim_score", ascending=False).drop_duplicates("test_name").iterrows():
+                        if row["match_strategy"] == "semantic" and pd.notna(row["cosine_sim_score"]):
+                            parts.append(f"{row['test_name']}: {row['cosine_sim_score'] * 100:.0f}%")
+                    return ", ".join(parts) if parts else "—"
+                sim_map = df_conf.groupby("jira_key").apply(_sim_pairs)
+                df_grouped["cosine_sim"] = df_grouped["jira_key"].map(sim_map).fillna("—")
+            else:
+                df_grouped["cosine_sim"] = "—"
+
+            st.markdown(
+                f'<div style="font:600 0.68rem/1 \'JetBrains Mono\',monospace; '
+                f'text-transform:uppercase; letter-spacing:.12em; '
+                f'color:{C["muted"]}; margin-bottom:.5rem;">Defect Summary</div>',
+                unsafe_allow_html=True,
+            )
+            tbl = df_grouped[["jira_key", "summary", "project", "status", "priority",
+                               "linked_test_names", "test_count", "run_count",
+                               "cosine_sim", "match_strategy"]].copy()
+            tbl.columns = ["JIRA Key", "Summary", "Project", "Status", "Priority",
+                           "Tests Linked", "# Tests", "Runs", "Cosine Sim", "Strategy"]
+            st.table(tbl)
+            st.markdown('<div style="margin-top:1.4rem;"></div>', unsafe_allow_html=True)
+
+        if df_conf.empty:
+            st.info("No confirmed links match the selected strategy filter.")
+        else:
+            st.markdown(
+                f'<div style="font:600 0.68rem/1 \'JetBrains Mono\',monospace; '
+                f'text-transform:uppercase; letter-spacing:.12em; '
+                f'color:{C["muted"]}; margin-bottom:.5rem;">All Links (flat view)</div>',
+                unsafe_allow_html=True,
+            )
+            df_conf["cosine_sim_score"] = df_conf.apply(
+                lambda row: (
+                    f"{row['cosine_sim_score'] * 100:.0f}%"
+                    if row["match_strategy"] == "semantic" and pd.notna(row["cosine_sim_score"])
+                    else "—"
+                ),
+                axis=1,
+            )
+            tbl = df_conf[["jira_key", "test_name", "run_id",
+                            "date_delta_days", "match_strategy", "cosine_sim_score", "summary"]].copy()
+            tbl.columns = ["JIRA Key", "Test", "Run",
+                           "Date Δ", "Strategy", "Cosine Sim", "Summary"]
+            st.table(tbl)
+
+    # ── Pending Review ────────────────────────────────────────────────────────
+    with tab_pending:
+        df_pend = pd.read_sql_query(
+            """SELECT dtl.link_id, dtl.jira_key, dtl.test_name, dtl.run_id,
+                      dtl.date_delta_days, dtl.match_strategy, dtl.cosine_sim_score,
+                      jd.summary, jd.status AS jira_status,
+                      jd.priority, jd.reporter_email
+               FROM defect_test_links dtl
+               JOIN jira_defects jd ON dtl.jira_key = jd.jira_key
+               JOIN runs r ON dtl.run_id = r.run_id
+               WHERE dtl.confirmed = 0 AND (? = 'All' OR r.team = ?)
+               ORDER BY dtl.cosine_sim_score DESC NULLS LAST, dtl.date_delta_days ASC""",
+            conn, params=tf,
+        )
+        df_pend = df_pend[df_pend["match_strategy"].isin(strategy_filter)]
+        if df_pend.empty:
+            st.success("No pending links — all candidates have been reviewed.")
+        else:
+            df_pend["cosine_sim_score"] = df_pend.apply(
+                lambda row: (
+                    f"{row['cosine_sim_score'] * 100:.0f}%"
+                    if row["match_strategy"] == "semantic" and pd.notna(row["cosine_sim_score"])
+                    else "—"
+                ),
+                axis=1,
+            )
+            st.markdown(
+                f'<div style="font:400 0.78rem/1.6 \'JetBrains Mono\',monospace; '
+                f'color:{C["muted"]}; margin-bottom:.8rem;">'
+                f"These links need human confirmation. "
+                f"Select a row, then click Accept or Reject.</div>",
+                unsafe_allow_html=True,
+            )
+            selected = st.dataframe(
+                df_pend.drop(columns=["link_id"]),
+                use_container_width=True,
+                column_config={
+                    "cosine_sim_score": st.column_config.TextColumn("Cosine Sim"),
+                    "date_delta_days":  st.column_config.NumberColumn("Date Δ (days)"),
+                    "match_strategy":   st.column_config.TextColumn("Strategy"),
+                    "jira_key":         st.column_config.TextColumn("JIRA Key"),
+                    "test_name":        st.column_config.TextColumn("Test"),
+                    "run_id":           st.column_config.TextColumn("Run"),
+                    "summary":          st.column_config.TextColumn("Summary", width="large"),
+                },
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+            )
+            rows = selected.get("selection", {}).get("rows", []) if isinstance(selected, dict) else []
+            if rows:
+                idx = rows[0]
+                link_id   = int(df_pend.iloc[idx]["link_id"])
+                jira_key  = df_pend.iloc[idx]["jira_key"]
+                test_name = df_pend.iloc[idx]["test_name"]
+                run_id    = df_pend.iloc[idx]["run_id"]
+                st.markdown(f'**Selected:** `{jira_key}` → `{test_name}` in run `{run_id}`')
+                col_accept, col_reject, _ = st.columns([1, 1, 6])
+                reviewer = "dashboard-user"
+                now = datetime.now(timezone.utc).isoformat()
+                if col_accept.button("Accept", type="primary"):
+                    conn.execute(
+                        "UPDATE defect_test_links SET confirmed=1, confirmed_by=?, confirmed_at=? WHERE link_id=?",
+                        (reviewer, now, link_id),
+                    )
+                    conn.commit()
+                    st.rerun()
+                if col_reject.button("Reject", type="secondary"):
+                    conn.execute(
+                        "UPDATE defect_test_links SET confirmed=-1, confirmed_by=?, confirmed_at=? WHERE link_id=?",
+                        (reviewer, now, link_id),
+                    )
+                    conn.commit()
+                    st.rerun()
+
+    # ── All Defects ───────────────────────────────────────────────────────────
+    with tab_all:
+        df_all = pd.read_sql_query(
+            """SELECT jd.jira_key, jd.summary, jd.reporter_email, jd.status,
+                      jd.priority, jd.project, jd.labels, jd.created,
+                      GROUP_CONCAT(DISTINCT CASE WHEN dtl.confirmed != -1 THEN dtl.test_name END) AS linked_test_names,
+                      COUNT(DISTINCT CASE WHEN dtl.confirmed != -1 THEN dtl.run_id END)            AS linked_runs,
+                      COUNT(DISTINCT CASE WHEN dtl.confirmed != -1 THEN dtl.test_name END)         AS linked_tests
+               FROM jira_defects jd
+               LEFT JOIN defect_test_links dtl ON jd.jira_key = dtl.jira_key
+               GROUP BY jd.jira_key
+               ORDER BY jd.created DESC""",
+            conn,
+        )
+        if df_all.empty:
+            st.info("No defects imported yet.")
+        else:
+            df_all["linked_test_names"] = df_all["linked_test_names"].fillna("—").str.replace(",", ", ", regex=False)
+            tbl = df_all[["jira_key", "summary", "reporter_email", "status", "priority",
+                           "project", "linked_test_names", "linked_runs", "linked_tests"]].copy()
+            tbl.columns = ["JIRA Key", "Summary", "Reporter", "Status", "Priority",
+                           "Project", "Tests Linked", "Linked Runs", "# Tests"]
+            st.table(tbl)
+
+    conn.close()
+
+
 def render_footer(db_paths: list[str], df_runs: pd.DataFrame) -> None:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     dbs = ", ".join(Path(p).name for p in db_paths) if db_paths else "demo"
@@ -1447,7 +1835,7 @@ def main() -> None:
         st.stop()
 
     db_sources = sorted(df_runs["_source_db"].unique().tolist()) if "_source_db" in df_runs.columns else ["unknown"]
-    selected_source, selected_week, selected_run_id, drift_test, show_trend, show_run_inspector, show_duration_drift, show_health_matrix = render_sidebar(df_runs, db_paths, db_sources)
+    selected_source, selected_week, selected_run_id, drift_test, show_trend, show_run_inspector, show_duration_drift, show_health_matrix, show_jira_linkage = render_sidebar(df_runs, db_paths, db_sources)
 
     df_runs_f = filter_by_source(df_runs, selected_source)
     df_results_f = filter_by_source(df_results, selected_source)
@@ -1467,6 +1855,8 @@ def main() -> None:
         render_duration_drift(df_results_f, drift_test, selected_source)
     if show_health_matrix:
         render_test_health_matrix(df_results_f, selected_source)
+    if show_jira_linkage:
+        render_jira_linkage(db_paths)
     render_footer(db_paths, df_runs_f)
 
 if __name__ == "__main__":

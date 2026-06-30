@@ -17,6 +17,7 @@ venv/
 .env/
 .venv/
 env/
+.hpe_project/
 
 # =========================
 # Generated Data
@@ -56,3 +57,10 @@ Thumbs.db
 # =========================
 *.sqlite3
 *.db
+
+# =========================
+# Project-specific
+# =========================
+Automation-Test-Stability-Analytics---HPE-CPP3/
+.claude/settings.local.json
+CPP_Test_Stability_Analytics.pptx

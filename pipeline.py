@@ -20,50 +20,6 @@ DEFAULT_CONFIG = {
 }
 
 
-SCHEMA_MAP = {
-    "schema_v2": {
-        "run_id":         "run_id",
-        "team":           "team",
-        "suite_name":     "suite_name",
-        "build_no":       "build_no",
-        "timestamp":      "timestamp",
-        "total":          "total",
-        "passed":         "passed",
-        "failed":         "failed",
-        "pass_rate_pct":  "pass_rate_pct",
-        "environment":    "environment",
-        "executor":       "executor",
-        "duration_s":     "duration_s",
-        # test_results
-        "test_name":      "test_name",
-        "status":         "status",
-        "test_duration_s": "duration_s",
-        "failure_msg":    "failure_msg",
-        "failure_kw":     "failure_kw",
-        "tags":           "tags",
-    },
-    "schema_v1": {
-        "run_id":         "run_id",
-        "team":           None,
-        "suite_name":     None,
-        "build_no":       "build_number",
-        "timestamp":      "timestamp",
-        "total":          "total_tests",
-        "passed":         "passed",
-        "failed":         "failed",
-        "pass_rate_pct":  "pass_rate",
-        "environment":    "environment",
-        "executor":       "executor",
-        "duration_s":     None,
-        "test_name":      "test_name",
-        "status":         "status",
-        "test_duration_s": "duration",
-        "failure_msg":    "message",
-        "failure_kw":     "keyword_name",
-        "tags":           None,
-    },
-}
-
 
 def create_database(db_path: str, schema_path: str) -> sqlite3.Connection:
     """Open (or create) analytics.db and apply schema.sql."""
@@ -396,7 +352,9 @@ def run_pipeline(config: dict) -> dict:
     print()
 
     print("Verifying row counts…")
-    total_expected_results = stats["runs_processed"] * 20
+    cursor.execute("SELECT COUNT(DISTINCT test_name) FROM test_results")
+    tests_per_run = cursor.fetchone()[0] or 0
+    total_expected_results = stats["runs_processed"] * tests_per_run
 
     cursor = conn.cursor()
     for table, expected, label in [

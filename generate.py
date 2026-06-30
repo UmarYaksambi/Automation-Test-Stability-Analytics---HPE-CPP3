@@ -63,15 +63,15 @@ FAIL_KW = {
 }
 
 # PASS RATE CURVE  (applies to stable + consistently_failing; flaky uses own prob)
-def run_pass_rate(n, anomaly_runs, anomaly_pass_rate):
+def run_pass_rate(n, anomaly_runs, anomaly_pass_rate, rng):
     """Return the suite-level pass-rate target for run n (1-indexed)."""
     if n in anomaly_runs:
         return anomaly_pass_rate
-    if   1  <= n <= 25: return random.uniform(0.70, 0.80)
-    elif 26 <= n <= 35: return random.uniform(0.65, 0.72)
-    elif 38 <= n <= 45: return random.uniform(0.60, 0.65)
-    elif 46 <= n <= 75: return random.uniform(0.65, 0.80)
-    else:               return random.uniform(0.82, 0.95)
+    if   1  <= n <= 25: return rng.uniform(0.70, 0.80)
+    elif 26 <= n <= 35: return rng.uniform(0.65, 0.72)
+    elif 38 <= n <= 45: return rng.uniform(0.60, 0.65)
+    elif 46 <= n <= 75: return rng.uniform(0.65, 0.80)
+    else:               return rng.uniform(0.82, 0.95)
 
 
 def get_program_name(n, total_runs):
@@ -306,7 +306,7 @@ def build_run(n, config, rng):
     passed = 0
     failed = 0
 
-    target_pass_rate = run_pass_rate(n, config["anomaly_runs"], config["anomaly_pass_rate"])
+    target_pass_rate = run_pass_rate(n, config["anomaly_runs"], config["anomaly_pass_rate"], rng)
     total_tests = len(TESTS)
     target_failures = round(total_tests * (1 - target_pass_rate))
     results = []
@@ -410,7 +410,7 @@ def build_run(n, config, rng):
 
     total = passed + failed
     meta = {
-        "team":          config["team_name"],
+        "team":          f"Team{program.capitalize()}",
         "suite":         program,
         "program":       program,
         "build_no":      n,

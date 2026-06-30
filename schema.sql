@@ -147,6 +147,122 @@ CREATE INDEX IF NOT EXISTS idx_test_results_status
 -- used by: WHERE status = 'FAIL' for failure analysis
 
 
+-- ── TABLE 4: jira_defects ─────────────────────────────────────
+-- Raw JIRA defect import. Populated by jira_ingest.py, not pipeline.py.
+
+CREATE TABLE IF NOT EXISTS jira_defects (
+    jira_key       TEXT PRIMARY KEY,
+    -- e.g. "CSSOSE-0001"
+
+    summary        TEXT NOT NULL,
+    description    TEXT,
+    reporter_email TEXT,
+    -- e.g. "sample.reporter@hpe.com"
+
+    status         TEXT,
+    -- Triage | In Progress | Testing | Development | Lab Review |
+    -- Closed - Fixed | Closed - No Change | Duplicate
+
+    priority       TEXT,
+    -- Medium | Undecided
+
+    issuetype      TEXT,
+    -- Bug
+
+    project        TEXT,
+    -- CSSE | CSSOSE | MCIO
+
+    labels         TEXT,
+    -- JSON array e.g. '["automation","flaky","bulk-import"]'
+
+    components     TEXT,
+    -- JSON array e.g. '["OS : OS - Linux"]'
+
+    created        DATETIME NOT NULL,
+    -- ISO format: "2026-06-03T10:30:00.000+0000"
+
+    imported_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_jira_defects_created
+    ON jira_defects(created);
+CREATE INDEX IF NOT EXISTS idx_jira_defects_reporter
+    ON jira_defects(reporter_email);
+CREATE INDEX IF NOT EXISTS idx_jira_defects_project
+    ON jira_defects(project);
+
+
+-- ── TABLE 5: reporter_team_map ────────────────────────────────
+-- Maps a tester's email to their team. More stable than executor-level
+-- mapping (agents rotate per build; team membership is months-long).
+-- Seed once per team member; update only on team changes.
+
+CREATE TABLE IF NOT EXISTS reporter_team_map (
+    email TEXT PRIMARY KEY,
+    -- e.g. "sample.reporter@hpe.com"
+
+    team  TEXT NOT NULL,
+    -- e.g. "TeamAlpha"
+
+    notes TEXT
+    -- optional: role, active dates
+);
+
+
+-- ── TABLE 6: defect_test_links ────────────────────────────────
+-- Candidate and confirmed mappings from a JIRA defect to a specific
+-- failing test run. Append-only; never modified by pipeline.py.
+--
+-- Workflow:
+--   jira_ingest.py inserts rows with confirmed=0 (pending).
+--   High-confidence matches (score >= 70) are auto-set to confirmed=1.
+--   Low-confidence matches appear in the Streamlit JIRA Review queue.
+--   Humans set confirmed=1 (accept) or confirmed=-1 (reject).
+
+CREATE TABLE IF NOT EXISTS defect_test_links (
+    link_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    jira_key        TEXT NOT NULL REFERENCES jira_defects(jira_key),
+    run_id          TEXT NOT NULL REFERENCES runs(run_id),
+    test_name       TEXT NOT NULL,
+    -- denormalized from test_results.test_name for fast filtering
+
+    match_strategy  TEXT NOT NULL,
+    -- "exact_name"  : TC_ identifier found verbatim in JIRA summary or description
+    -- "label_dict"  : matched via label-to-test dictionary
+    -- "keyword"     : matched via feature area keyword
+    -- "semantic"    : TF-IDF cosine similarity fallback (no TC_ name found)
+
+    confidence      INTEGER NOT NULL,
+    -- 0-100, computed by jira_ingest.py scoring model
+
+    date_delta_days INTEGER,
+    -- ABS(date(defect.created) - date(run.timestamp)) in days
+
+    cosine_sim_score REAL,
+    -- cosine similarity score when match_strategy = 'semantic'; NULL otherwise
+
+    confirmed       INTEGER NOT NULL DEFAULT 0,
+    -- 0 = pending review
+    -- 1 = confirmed (auto or manual)
+    -- -1 = rejected
+
+    confirmed_by    TEXT,
+    confirmed_at    DATETIME,
+    notes           TEXT,
+    linked_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_dtl_jira_key
+    ON defect_test_links(jira_key);
+CREATE INDEX IF NOT EXISTS idx_dtl_run_id
+    ON defect_test_links(run_id);
+CREATE INDEX IF NOT EXISTS idx_dtl_test_name
+    ON defect_test_links(test_name);
+CREATE INDEX IF NOT EXISTS idx_dtl_confirmed
+    ON defect_test_links(confirmed);
+
+
 -- ── SAMPLE QUERIES (for reference, not executed) ──────────────
 /*
 

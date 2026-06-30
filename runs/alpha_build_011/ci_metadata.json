@@ -4,10 +4,10 @@
   "program": "alpha",
   "build_no": 11,
   "timestamp": "2024-10-11T00:00:00",
-  "total": 20,
-  "passed": 16,
-  "failed": 4,
-  "pass_rate_pct": 80.0,
+  "total": 23,
+  "passed": 18,
+  "failed": 5,
+  "pass_rate_pct": 78.3,
   "environment": "staging",
-  "executor": "jenkins-agent-03"
+  "executor": "jenkins-agent-07"
 }
