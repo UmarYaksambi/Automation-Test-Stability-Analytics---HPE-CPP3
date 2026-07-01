@@ -22,6 +22,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+
+
 try:
     from pipeline import (
         load_multi_db,
@@ -692,6 +694,28 @@ def compute_anomalies(df_runs: pd.DataFrame) -> pd.DataFrame:
     df["anomaly"] = df["z_score"] >= ANOMALY_SIGMA
     return df
 
+
+def render_ml_insights_cta() -> None:
+    st.markdown(
+        f"""
+        <div style="margin: 0 0 1.2rem; padding: 1rem 1.1rem; border: 1px solid {C['border']}; border-radius: 14px; background: linear-gradient(135deg, {C['card']} 0%, {C['bg2']} 100%);">
+          <div style="font-size: 0.95rem; font-weight: 700; color: {C['txt']}; margin-bottom: .35rem;">🤖 ML Insights workspace</div>
+          <div style="font-size: 0.9rem; color: {C['muted']}; margin-bottom: .7rem;">
+            Open the dedicated ML Insights page for flakiness predictions, duration drift, clustering, and anomaly screening.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if switch_page := getattr(st, "switch_page", None):
+        if st.button("Open ML Insights", type="primary", use_container_width=False):
+            switch_page("pages/2_ML_Insights.py")
+    elif page_link := getattr(st, "page_link", None):
+        page_link("pages/2_ML_Insights.py", label="Open ML Insights", icon="🤖")
+    else:
+        st.info("Open the ML Insights page from the sidebar page menu.")
+
+
 def get_failures_for_run(df_results: pd.DataFrame, run_id: str) -> pd.DataFrame:
     df = df_results[(df_results["run_id"] == run_id) & (df_results["status"] == "FAIL")].copy()
     def classify(msg):
@@ -1194,7 +1218,7 @@ def render_sidebar(df_runs: pd.DataFrame, db_paths: list[str], db_sources: list[
         show_health_matrix = st.checkbox("Test Health Matrix", value=False)
         show_defect_mapping = st.checkbox("Defect Mapping", value=False)
         st.markdown("---")
-
+        
         st.markdown(f'<div class="sb-label">Run Inspector</div>', unsafe_allow_html=True)
         # safe_sort_runs may be masked by a dataframe column with the same name
         sorter = getattr(df_runs, "safe_sort_runs", None)
@@ -1932,14 +1956,10 @@ def render_defect_mapping(db_paths: list[str]) -> None:
                             st.error("Failed to open writeable database connection.")
                             st.stop()
                         live_records = []
-                        
-                        # Respect CLI / UI tester_email setting
-                        tester_email = live_email.strip() or None
-
                         for raw in fetch_defects(
                             creds,
                             since_days     = int(live_since),
-                            reporter_email = tester_email,
+                            reporter_email = live_email.strip() or creds.email,
                         ):
                             loader = load_jira_defects_from_list
                             if loader is None:
@@ -1958,7 +1978,7 @@ def render_defect_mapping(db_paths: list[str]) -> None:
                             raise ImportError("map_defects_to_test_results is unavailable")
                         mstats = mapper_fn(
                             conn2,
-                            tester_email = tester_email,
+                            tester_email = live_email.strip() or creds.email or None,
                             window_days  = int(live_since),
                         )
                     mode = "hybrid rule+semantic" if mstats.get("semantic_enabled") else "rule-only"
@@ -2475,19 +2495,7 @@ def render_footer(db_paths: list[str], df_runs: pd.DataFrame) -> None:
 
 
 def _parse_db_paths() -> list[str]:
-    paths = []
-    args = sys.argv[1:]
-    i = 0
-    while i < len(args):
-        if args[i] == "--db" and i + 1 < len(args):
-            paths.append(args[i + 1])
-            i += 2
-        elif args[i].startswith("--db="):
-            paths.append(args[i].split("=", 1)[1])
-            i += 1
-        else:
-            i += 1
-    return paths if paths else [DEFAULT_DB]
+    return [str((Path.cwd() / DEFAULT_DB).resolve())]
 
 def main() -> None:
     inject_css()
@@ -2524,6 +2532,7 @@ def main() -> None:
         selected_week = max_weeks_f
 
     render_header(df_runs_f)
+    render_ml_insights_cta()
     render_weekly_health(df_runs_f, df_results_f, selected_week)
     if show_trend:
         render_trend(df_runs_f)
